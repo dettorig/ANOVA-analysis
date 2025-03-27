@@ -1,2 +1,2 @@
 # ANOVA-analysis
-ANOVA analysis of made up dataset of Professors' salaries across faculties 
+ANOVA analysis of synthetic dataset of Universities Professors' salaries across faculties 
