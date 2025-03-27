@@ -1,0 +1,162 @@
+library(utils)
+library(stats)
+library(car)
+library(emmeans)
+library(ggplot2)
+library(lmtest)
+library(moments)
+
+# Set the path
+file_path <- "C:/Users/detto/Downloads/AdjunctProf (Project 13).txt"
+
+# Read the data, skipping over information
+data <- read.table(file_path, header = FALSE, skip = 13)
+summary(data)
+
+# Rename columns
+colnames(data) <- c("Payment", "Subject", "Degree", "ID")
+
+# Convert 'subject' and 'degree' to factors
+data$Subject <- factor(data$Subject, 
+                       labels = c("Humanities",
+                                  "Social Sciences",
+                                  "Engineering",
+                                  "Management"))
+
+data$Degree <- factor(data$Degree, 
+                      labels = c("Bachelor",
+                                 "Master",
+                                 "Doctorate"))
+
+# Fit Sum of Squares Type III ANOVA model (it does not depend on parameters' ordering)
+fit.type3c = Anova(lm(Payment~Subject*Degree, contrasts=list(Subject="contr.sum", Degree="contr.sum"), data = data),type="III")
+fit.type3c
+
+# Perform Tukey's Honest Significant Differences test for pairwise comparisons
+fit = lm(Payment~Subject*Degree, contrasts=list(Subject="contr.sum", Degree="contr.sum"), data = data)
+emms <- emmeans(fit, ~ Subject + Degree)
+pairwise_comparisons <- pairs(emms, adjust = "tukey")
+pairwise_comparisons
+
+# Plot the Tukey pairwise comarison
+# 1. Define a function to check if the degrees in the comparison are the same
+is_same_degree <- function(contrast) {
+  degree1 <- sub(".* - (.*)$", "\\1", contrast)  
+  degree2 <- sub("(.*) - .*", "\\1", contrast)  
+  
+  if ((grepl("Bachelor", degree1) & grepl("Bachelor", degree2)) |
+      (grepl("Master", degree1) & grepl("Master", degree2)) |
+      (grepl("Doctorate", degree1) & grepl("Doctorate", degree2))) {
+    return("Same Degree")
+  } else {
+    return("Different Degree")
+  }
+}
+
+#convert Tukey test data into data frame
+pairwise_df <- data.frame(pairwise_comparisons)
+
+#create new column where all comparisons with p-value < 0.05
+#will be flagged as "Significant"
+pairwise_df$Significance <- ifelse(pairwise_df$p.value < 0.05, "Significant", "Not Significant")
+
+# 2. Apply the function to the data of Tukey test
+pairwise_df$Same_Degree <- sapply(pairwise_df$contrast, is_same_degree)
+
+# 3. Filter only significant comparisons
+significant_comparisons <- pairwise_df[pairwise_df$Significance == "Significant", ]
+
+# 4. Create the plot for significant Tukey comparisons
+plot_tukey <- ggplot(significant_comparisons, aes(x = reorder(contrast, estimate), y = estimate, color = Same_Degree)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = estimate - SE, ymax = estimate + SE), width = 0.2) +
+  coord_flip() +
+  scale_color_manual(values = c("Same Degree" = "blue", "Different Degree" = "red")) +
+  labs(
+    title = "Significant Tukey Pairwise Comparisons",
+    x = "Comparison",
+    y = "Estimated Difference",
+    color = "Comparison Type"
+  ) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8))  # Adjust label size for readability
+
+print(plot_tukey)
+
+# Model assumption checks
+# 1. Check normality of residuals using QQ plot and Shapiro-Wilk test
+qqnorm(rstudent(fit))
+qqline(rstudent(fit))
+shapiro.test(rstudent(fit))
+
+# 2. Calculate skewness and kurtosis of the residuals to further check normality
+kurtosis(rstudent(fit))
+skewness(rstudent(fit))
+
+# 3. Check for homoscedasticity using Levene's test
+leveneTest(fit)
+
+# 4. Check homoscedasticity visually by plotting resuduals vs fitted values
+plot(fit, which=1)
+
+
+# Create boxplot to visualize the distribution of 'payment' across 'subject' and 'degree'
+ggplot(data, aes(x = Subject, y = Payment, fill = Degree)) +
+  geom_boxplot() +
+  labs(
+    title = "Boxplot of Payment by Subject and Degree",
+    x = "Subject",
+    y = "Payment",
+    fill = "Degree"
+  ) +
+  theme_minimal()
+
+# Further exploration of the data: K-Means Clustering with One-Hot Encoded Variables
+library(recipes)
+library(caret)
+library(factoextra)
+
+# One-hot encoding for Degree and Subject
+dummies <- dummyVars("~ Degree + Subject", data = data)
+one_hot_data <- data.frame(predict(dummies, newdata = data))
+
+# Combine the one-hot encoded variables with the 'payment' variable
+clustering_data <- cbind(data$Payment, one_hot_data)
+colnames(clustering_data)[1] <- "Payment" # Rename the Payment column for clarity
+clustering_data_scaled <- scale(clustering_data)
+
+# Perform K-means clustering (adjust number of clusters)
+set.seed(123)
+kmeans_result2 <- kmeans(clustering_data_scaled, centers = 2)
+set.seed(123)
+kmeans_result3 <- kmeans(clustering_data_scaled, centers = 3)
+set.seed(123)
+kmeans_result4 <- kmeans(clustering_data_scaled, centers = 4)
+set.seed(123)
+kmeans_result5 <- kmeans(clustering_data_scaled, centers = 5)
+
+# Plot proportion of explained variance
+p2 <- kmeans_result2$betweenss/kmeans_result2$totss
+p3 <- kmeans_result3$betweenss/kmeans_result3$totss
+p4 <- kmeans_result4$betweenss/kmeans_result4$totss
+p5 <- kmeans_result5$betweenss/kmeans_result5$totss
+
+par(pty="s")
+plot(1:5, c(0, p2, p3, p4, p5), type = "b", xlab="n clusters", ylab = "variance ex", cex=1.2)
+
+# We use the 3-cluster solution in the following as the proportion of variance does not increase much by adding clusters
+# Add cluster labels back to the original dataset
+data$Cluster <- factor(kmeans_result3$cluster)
+
+# Visualize the clusters in a reduced dimensional space
+fviz_cluster(kmeans_result3, data = clustering_data_scaled,
+             geom = "point", ellipse.type = "convex") +
+  labs(title = "K-means Clustering with One-Hot Encoded Data")
+
+# Summary of clusters by Degree
+degree_cluster_table <- table(Degree = data$Degree, Cluster = data$Cluster)
+print(degree_cluster_table)
+
+# Summary of clusters by Subject
+subject_cluster_table <- table(Subject = data$Subject, Cluster = data$Cluster)
+print(subject_cluster_table)
